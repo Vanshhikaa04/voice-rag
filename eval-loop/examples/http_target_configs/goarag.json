@@ -1,0 +1,22 @@
+{
+  "_comment": "GoaRAG's own docs disagree with themselves on which embedding model is actually live: .env.example states intfloat/multilingual-e5-small as the default, but the documented example responses for /api/query (providers.embedding) and /api/stats (embeddingModel) both show BAAI/bge-m3. This config follows the latter since it's what their own example RESPONSES show running, not just a stated default -- but verify against the real instance's own GET /api/health or /api/stats before trusting this, per their own warning: getting this wrong degrades retrieval silently rather than erroring. If it turns out to really be e5-small: model_name -> intfloat/multilingual-e5-small, query_prefix -> 'query: ', passage_prefix -> 'passage: ' (both non-empty, mean pooling).",
+  "generate": {
+    "base_url": "http://localhost:8787",
+    "path": "/api/query",
+    "method": "POST",
+    "body": { "query": "{{query}}", "stream": false, "options": { "retrievalOnly": false } },
+    "timeout_s": 120,
+    "answer_field": "answer",
+    "model_field": "model",
+    "generation_ms_field": "latency.total",
+    "grounded_field": "status",
+    "grounded_values": ["answered"]
+  },
+  "retrieval": {
+    "mode": "reembed",
+    "model_name": "BAAI/bge-m3",
+    "query_prefix": "",
+    "passage_prefix": "",
+    "normalize": true
+  }
+}

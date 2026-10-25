@@ -1,0 +1,5 @@
+numpy>=1.26
+# --- optional ---
+# faster-whisper     # real speech-to-text (local, CPU friendly)
+# sounddevice        # microphone capture
+# anthropic          # LLM generator (set ANTHROPIC_API_KEY)

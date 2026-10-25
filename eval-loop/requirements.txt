@@ -1,0 +1,37 @@
+# This suite imports and runs the target RAG project's real code in-process
+# (see eval/target.py), so it needs that project's exact dependencies --
+# there's no separate, smaller dependency set for "just the eval logic".
+#
+# Recommended: don't create a new venv for this repo at all. Run with the
+# target project's own virtualenv Python, e.g. on Windows:
+#   RAG\.venv\Scripts\python.exe -m eval.runner
+# It already has everything below (plus torch+transformers if
+# GENERATION_BACKEND="local" -- see the target project's own
+# requirements.txt / requirements-training.txt for that GPU-specific pin).
+#
+# This file exists for anyone who wants a standalone venv instead. Lower
+# bounds, not exact pins -- exact pins from the original dev machine (one
+# specific Python version + platform) failed to resolve at all on a
+# different Python version (pip couldn't find that exact faiss-cpu build,
+# only later ones) the first time someone else actually tried installing
+# this. A public, broadly-installed tool needs ranges; exact pins are the
+# right call for the RAG project's own reproducible-training-environment
+# use case, not for this one.
+faiss-cpu>=1.9.0
+sentence-transformers>=3.3.1
+numpy>=1.26.4
+pyarrow>=14.0.0
+huggingface_hub>=0.36.2
+python-dotenv>=1.2.2
+
+# eval/http_target.py -- the generic adapter for targets that are an HTTP
+# service rather than an importable Python module (e.g. a Node/TS RAG
+# project). Only needed if EVAL_GENERATOR_MODULE=eval.http_target.
+requests>=2.31.0
+
+# Judge provider -- eval/judge.py auto-detects whichever of these is
+# actually configured (OPENAI_API_KEY vs ANTHROPIC_API_KEY / `ant auth
+# login`). You only need the one matching your key; install both if you
+# want to be able to switch via EVAL_JUDGE_PROVIDER.
+openai>=3.1.0
+anthropic>=0.122.0

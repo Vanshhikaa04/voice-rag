@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice RAG Console</title>
+<style>
+  :root {
+    --bg:#f6f7f9; --panel:#fff; --text:#1c2230; --muted:#6a7385; --line:#e1e5ec;
+    --accent:#3b5bdb; --accent-t:#fff; --ok:#2b8a3e; --warn:#c2410c; --chip:#eef1fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#12151c; --panel:#1a1f2a; --text:#e6e9f0; --muted:#8c96aa; --line:#2a3140;
+      --accent:#6d8cff; --accent-t:#0e1220; --ok:#5ec27a; --warn:#f08c52; --chip:#232a3b;
+    }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); background:var(--panel); display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  header span { color:var(--muted); font-size:13px; }
+  main { display:grid; grid-template-columns:340px 1fr; gap:16px; padding:16px; max-width:1200px; margin:0 auto; }
+  @media (max-width:820px) { main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+  section h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 10px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 3px; }
+  input, select, textarea { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px; background:var(--bg); color:var(--text); font:inherit; }
+  textarea { resize:vertical; }
+  button { padding:8px 14px; border:1px solid var(--line); border-radius:7px; background:var(--panel); color:var(--text); font:inherit; cursor:pointer; }
+  button.primary { background:var(--accent); color:var(--accent-t); border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  .drop { border:2px dashed var(--line); border-radius:8px; padding:18px; text-align:center; color:var(--muted); cursor:pointer; }
+  .drop.over { border-color:var(--accent); color:var(--accent); }
+  .doc { display:flex; justify-content:space-between; gap:8px; font-size:13px; padding:5px 0; border-bottom:1px solid var(--line); }
+  .doc:last-child { border-bottom:0; }
+  .doc button { padding:0 8px; }
+  .row { display:flex; gap:8px; }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  #chat { min-height:320px; max-height:62vh; overflow:auto; display:flex; flex-direction:column; gap:12px; }
+  .msg { padding:10px 12px; border-radius:9px; max-width:92%; white-space:pre-wrap; }
+  .msg.user { align-self:flex-end; background:var(--accent); color:var(--accent-t); }
+  .msg.bot { background:var(--bg); border:1px solid var(--line); }
+  .msg.refused { border-color:var(--warn); }
+  .meta { font-size:12px; color:var(--muted); margin-top:6px; }
+  .cite { display:inline-block; background:var(--chip); border-radius:5px; padding:1px 7px; margin:2px 4px 0 0; font-size:12px; cursor:pointer; }
+  details { font-size:12px; margin-top:6px; color:var(--muted); }
+  details p { margin:4px 0; }
+  .stat { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Voice RAG Console</h1>
+  <span>Upload documents · ask questions · plug in any LLM or RAG endpoint. Runs entirely in your browser.</span>
+</header>
+
+<main>
+  <aside>
+    <section>
+      <h2>Documents</h2>
+      <div class="drop" id="drop">Drop .txt / .md / .json / .csv / .pdf here, or click to choose</div>
+      <input type="file" id="file" multiple accept=".txt,.md,.markdown,.json,.csv,.pdf,text/*" hidden>
+      <div id="docs" style="margin-top:10px"></div>
+      <div class="stat" id="stat">No documents loaded.</div>
+      <div class="row" style="margin-top:8px">
+        <button id="sample">Load sample</button>
+        <button id="clear">Clear all</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Answer engine</h2>
+      <label for="mode">Mode</label>
+      <select id="mode">
+        <option value="local">Local extractive (no LLM, offline)</option>
+        <option value="openai">LLM: OpenAI-compatible endpoint</option>
+        <option value="anthropic">LLM: Anthropic Claude</option>
+        <option value="rag">Custom RAG endpoint (your backend)</option>
+      </select>
+
+      <div id="cfg-llm">
+        <label for="url">LLM endpoint URL</label>
+        <input id="url" placeholder="https://api.openai.com/v1/chat/completions">
+        <label for="key">API key</label>
+        <input id="key" type="password" placeholder="sk-…" autocomplete="off">
+        <label for="model">Model</label>
+        <input id="model" placeholder="gpt-4o-mini / claude-sonnet-5-5 / llama3">
+        <label><input type="checkbox" id="remember" style="width:auto"> Remember key in this browser</label>
+      </div>
+
+      <div id="cfg-rag" hidden>
+        <label for="ragurl">RAG endpoint URL</label>
+        <input id="ragurl" placeholder="http://localhost:8000/query">
+        <label for="raghdr">Extra headers (JSON, optional)</label>
+        <input id="raghdr" placeholder='{"Authorization":"Bearer …"}'>
+        <div class="hint">POST body: <code>{"question", "top_k", "chunks":[{"id","source","text"}]}</code><br>
+          Expected reply: <code>{"answer", "citations":[…]}</code> (a bare string also works).</div>
+      </div>
+
+      <label for="topk">Chunks retrieved (top-k)</label>
+      <input id="topk" type="number" min="1" max="20" value="4">
+      <label for="cov">Refuse if best match coverage below <span id="covv">0.35</span></label>
+      <input id="cov" type="range" min="0" max="1" step="0.05" value="0.35">
+      <label for="sys">System prompt</label>
+      <textarea id="sys" rows="4">Answer ONLY from the numbered context. Cite sources like [1]. If the context does not contain the answer, say "I don't know".</textarea>
+    </section>
+  </aside>
+
+  <div>
+    <section>
+      <h2>Ask</h2>
+      <div id="chat"><div class="stat">Load some documents, then ask a question.</div></div>
+      <div class="row" style="margin-top:12px">
+        <input id="q" placeholder="Ask a question about your documents…" autocomplete="off">
+        <button id="mic" title="Speak your question">🎤</button>
+        <button id="ask" class="primary">Ask</button>
+      </div>
+      <div class="hint" id="status"></div>
+    </section>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+
+/* ---------- text utilities ---------- */
+const STOP = new Set("a an the and or but if of to in on at for with by from is are was were be been am do does did how what why when where which who whom i my me we you your it its this that these those can could should would will shall about as into than then so not no".split(" "));
+function stem(w) { return w.replace(/(ing|ed|es|s)$/, m => w.length - m.length >= 3 ? "" : m); }
+function terms(s) { return (s.toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => !STOP.has(w)).map(stem); }
+
+function splitSentences(text) {
+  return text.replace(/\r/g, "").split(/\n{2,}|(?<=[.!?])\s+(?=[A-Z0-9"“(])/).map(s => s.trim()).filter(Boolean);
+}
+function chunkText(text, size = 420, overlap = 1) {
+  const sents = splitSentences(text), out = [];
+  let cur = [];
+  for (const s of sents) {
+    const len = cur.join(" ").length;
+    if (cur.length && len + s.length > size) {
+      out.push(cur.join(" "));
+      cur = cur.slice(-overlap);
+    }
+    cur.push(s);
+  }
+  if (cur.length) out.push(cur.join(" "));
+  return out;
+}
+
+/* ---------- index (BM25) ---------- */
+const state = { docs: [], chunks: [], df: new Map(), avgLen: 0 };
+function rebuild() {
+  state.chunks = [];
+  for (const d of state.docs) {
+    chunkText(d.text).forEach((t, i) => state.chunks.push({ id: d.name + "#" + (i + 1), source: d.name, text: t, tf: null, len: 0 }));
+  }
+  state.df = new Map();
+  let total = 0;
+  for (const c of state.chunks) {
+    const ts = terms(c.text);
+    c.len = ts.length; total += ts.length;
+    c.tf = new Map();
+    for (const t of ts) c.tf.set(t, (c.tf.get(t) || 0) + 1);
+    for (const t of c.tf.keys()) state.df.set(t, (state.df.get(t) || 0) + 1);
+  }
+  state.avgLen = state.chunks.length ? total / state.chunks.length : 0;
+  renderDocs();
+}
+function search(query, k) {
+  const q = [...new Set(terms(query))], N = state.chunks.length, k1 = 1.5, b = .75;
+  if (!q.length || !N) return [];
+  const scored = state.chunks.map(c => {
+    let s = 0, hit = 0;
+    for (const t of q) {
+      const f = c.tf.get(t); if (!f) continue;
+      hit++;
+      const n = state.df.get(t), idf = Math.log(1 + (N - n + .5) / (n + .5));
+      s += idf * f * (k1 + 1) / (f + k1 * (1 - b + b * c.len / state.avgLen));
+    }
+    return { chunk: c, score: s, coverage: hit / q.length };
+  }).filter(r => r.score > 0).sort((a, b) => b.score - a.score);
+  return scored.slice(0, k);
+}
+
+/* ---------- document loading ---------- */
+async function readFile(f) {
+  const ext = f.name.split(".").pop().toLowerCase();
+  if (ext === "pdf") {
+    if (!window.pdfjsLib) throw new Error("PDF support failed to load (offline?)");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+    let out = "";
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const tc = await (await pdf.getPage(p)).getTextContent();
+      out += tc.items.map(i => i.str).join(" ") + "\n\n";
+    }
+    return out;
+  }
+  const t = await f.text();
+  if (ext === "json") { try { return JSON.stringify(JSON.parse(t), null, 1); } catch { return t; } }
+  return t;
+}
+async function addFiles(files) {
+  for (const f of files) {
+    try {
+      const text = (await readFile(f)).trim();
+      if (!text) throw new Error("no text found");
+      state.docs = state.docs.filter(d => d.name !== f.name);
+      state.docs.push({ name: f.name, text });
+    } catch (e) { setStatus(`Could not read ${f.name}: ${e.message}`); }
+  }
+  rebuild();
+}
+function renderDocs() {
+  $("docs").innerHTML = "";
+  state.docs.forEach(d => {
+    const row = document.createElement("div"); row.className = "doc";
+    const n = document.createElement("span"); n.textContent = d.name;
+    const x = document.createElement("button"); x.textContent = "×"; x.title = "Remove";
+    x.onclick = () => { state.docs = state.docs.filter(e => e !== d); rebuild(); };
+    row.append(n, x); $("docs").append(row);
+  });
+  $("stat").textContent = state.docs.length ? `${state.docs.length} document(s) · ${state.chunks.length} chunks indexed` : "No documents loaded.";
+}
+
+const SAMPLE = `Factory reset. To factory reset the hub, press and hold the reset button on the underside for 15 seconds until the light ring flashes red and then turns solid blue. A factory reset removes all paired devices, automations and Wi-Fi settings.
+
+Pairing accessories. To pair a sensor, bulb or plug, open the app, tap Add Device and put the accessory into pairing mode by holding its button for 3 seconds. The hub light ring pulses green while it searches.
+
+Sensors disconnecting. Replace batteries in sensors, move the hub closer, or add a Range Extender. Check that the hub firmware is up to date.`;
+
+/* ---------- answering ---------- */
+function setStatus(s) { $("status").textContent = s; }
+function addMsg(cls, text) {
+  if ($("chat").firstElementChild && $("chat").firstElementChild.classList.contains("stat")) $("chat").innerHTML = "";
+  const m = document.createElement("div"); m.className = "msg " + cls; m.textContent = text;
+  $("chat").append(m); $("chat").scrollTop = $("chat").scrollHeight; return m;
+}
+function ctxBlock(hits) { return hits.map((h, i) => `[${i + 1}] (${h.chunk.source}) ${h.chunk.text}`).join("\n\n"); }
+
+function localAnswer(question, hits) {
+  const q = new Set(terms(question));
+  const sents = [];
+  hits.forEach((h, i) => splitSentences(h.chunk.text).forEach(s => {
+    const ts = new Set(terms(s)); let n = 0; q.forEach(t => { if (ts.has(t)) n++; });
+    if (n) sents.push({ s, n: n / q.size, i });
+  }));
+  sents.sort((a, b) => b.n - a.n);
+  const pick = sents.slice(0, 2);
+  return pick.map(p => `${p.s} [${p.i + 1}]`).join(" ");
+}
+
+async function callOpenAI(question, hits) {
+  const r = await fetch($("url").value.trim(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...($("key").value ? { Authorization: "Bearer " + $("key").value } : {}) },
+    body: JSON.stringify({
+      model: $("model").value.trim(), temperature: 0,
+      messages: [{ role: "system", content: $("sys").value }, { role: "user", content: `Context:\n${ctxBlock(hits)}\n\nQuestion: ${question}` }],
+    }),
+  });
+  if (!r.ok) throw new Error(`LLM endpoint ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const j = await r.json();
+  return j.choices?.[0]?.message?.content ?? j.message?.content ?? JSON.stringify(j);
+}
+async function callAnthropic(question, hits) {
+  const r = await fetch($("url").value.trim() || "https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": $("key").value, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+    body: JSON.stringify({
+      model: $("model").value.trim() || "claude-sonnet-5-5", max_tokens: 800, system: $("sys").value,
+      messages: [{ role: "user", content: `Context:\n${ctxBlock(hits)}\n\nQuestion: ${question}` }],
+    }),
+  });
+  if (!r.ok) throw new Error(`Anthropic ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const j = await r.json();
+  return (j.content || []).map(c => c.text || "").join("");
+}
+async function callRag(question, k) {
+  let extra = {};
+  try { if ($("raghdr").value.trim()) extra = JSON.parse($("raghdr").value); } catch { throw new Error("Extra headers is not valid JSON"); }
+  const chunks = state.chunks.map(c => ({ id: c.id, source: c.source, text: c.text }));
+  const r = await fetch($("ragurl").value.trim(), {
+    method: "POST", headers: { "Content-Type": "application/json", ...extra },
+    body: JSON.stringify({ question, top_k: k, chunks }),
+  });
+  if (!r.ok) throw new Error(`RAG endpoint ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const ct = r.headers.get("content-type") || "";
+  const j = ct.includes("json") ? await r.json() : await r.text();
+  return typeof j === "string" ? { answer: j, citations: [] } : { answer: j.answer ?? j.response ?? JSON.stringify(j), citations: j.citations ?? j.sources ?? [] };
+}
+
+async function ask() {
+  const question = $("q").value.trim();
+  if (!question) return;
+  const mode = $("mode").value, k = Math.max(1, +$("topk").value || 4);
+  if (mode !== "rag" && !state.chunks.length) { setStatus("Upload at least one document first."); return; }
+  $("q").value = ""; addMsg("user", question);
+  const bubble = addMsg("bot", "…"), t0 = performance.now();
+  $("ask").disabled = true; setStatus("");
+  try {
+    let answer, cites = [], refused = false, hits = [];
+    if (mode === "rag") {
+      const r = await callRag(question, k);
+      answer = r.answer; cites = (r.citations || []).map(c => typeof c === "string" ? c : (c.id || c.source || JSON.stringify(c)));
+    } else {
+      hits = search(question, k);
+      const cov = hits.length ? Math.max(...hits.map(h => h.coverage)) : 0;
+      if (!hits.length || cov < +$("cov").value) {
+        refused = true;
+        answer = "I don't know. The uploaded documents don't contain enough evidence to answer that.";
+      } else if (mode === "local") answer = localAnswer(question, hits) || "I don't know.";
+      else if (mode === "openai") answer = await callOpenAI(question, hits);
+      else answer = await callAnthropic(question, hits);
+      cites = hits.map((h, i) => `[${i + 1}] ${h.chunk.id}`);
+    }
+    bubble.textContent = answer;
+    if (refused) bubble.classList.add("refused");
+    const meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = `${mode} · ${(performance.now() - t0).toFixed(0)} ms`;
+    bubble.append(meta);
+    if (cites.length && !refused) {
+      const wrap = document.createElement("div");
+      cites.forEach(c => { const s = document.createElement("span"); s.className = "cite"; s.textContent = c; wrap.append(s); });
+      bubble.append(wrap);
+    }
+    if (hits.length) {
+      const d = document.createElement("details");
+      d.innerHTML = "<summary>Retrieved context</summary>";
+      hits.forEach((h, i) => { const p = document.createElement("p"); p.textContent = `[${i + 1}] ${h.chunk.id} (score ${h.score.toFixed(2)}, coverage ${h.coverage.toFixed(2)}): ${h.chunk.text}`; d.append(p); });
+      bubble.append(d);
+    }
+  } catch (e) {
+    bubble.textContent = "Error: " + e.message + (e instanceof TypeError ? " (network/CORS — the endpoint must allow requests from this page)" : "");
+  } finally { $("ask").disabled = false; $("chat").scrollTop = $("chat").scrollHeight; }
+}
+
+/* ---------- wiring ---------- */
+$("drop").onclick = () => $("file").click();
+$("file").onchange = e => { addFiles([...e.target.files]); e.target.value = ""; };
+["dragover", "dragenter"].forEach(ev => $("drop").addEventListener(ev, e => { e.preventDefault(); $("drop").classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => $("drop").addEventListener(ev, e => { e.preventDefault(); $("drop").classList.remove("over"); }));
+$("drop").addEventListener("drop", e => addFiles([...e.dataTransfer.files]));
+$("sample").onclick = () => { state.docs = state.docs.filter(d => d.name !== "sample-manual.txt"); state.docs.push({ name: "sample-manual.txt", text: SAMPLE }); rebuild(); $("q").value = "How do I factory reset the hub?"; };
+$("clear").onclick = () => { state.docs = []; rebuild(); };
+$("ask").onclick = ask;
+$("q").addEventListener("keydown", e => { if (e.key === "Enter") ask(); });
+$("cov").oninput = () => $("covv").textContent = (+$("cov").value).toFixed(2);
+
+const PRESETS = { openai: ["https://api.openai.com/v1/chat/completions", "gpt-4o-mini"], anthropic: ["https://api.anthropic.com/v1/messages", "claude-sonnet-5-5"] };
+function syncMode(fromUser) {
+  const m = $("mode").value;
+  $("cfg-llm").hidden = !(m === "openai" || m === "anthropic");
+  $("cfg-rag").hidden = m !== "rag";
+  if (fromUser && PRESETS[m]) { $("url").value = PRESETS[m][0]; $("model").value = PRESETS[m][1]; }
+}
+$("mode").onchange = () => { syncMode(true); saveCfg(); };
+
+const FIELDS = ["mode", "url", "model", "ragurl", "raghdr", "topk", "cov", "sys"];
+function saveCfg() {
+  FIELDS.forEach(f => store.set("vr_" + f, $(f).value));
+  if ($("remember").checked) { store.set("vr_key", $("key").value); store.set("vr_remember", "1"); }
+  else { store.del("vr_key"); store.del("vr_remember"); }
+}
+FIELDS.forEach(f => $(f).addEventListener("change", saveCfg));
+$("key").addEventListener("change", saveCfg); $("remember").addEventListener("change", saveCfg);
+FIELDS.forEach(f => { const v = store.get("vr_" + f, null); if (v !== null) $(f).value = v; });
+if (store.get("vr_remember", "") === "1") { $("remember").checked = true; $("key").value = store.get("vr_key", ""); }
+$("covv").textContent = (+$("cov").value).toFixed(2);
+syncMode(false);
+
+/* voice input via the browser's speech recognition */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) { $("mic").disabled = true; $("mic").title = "Speech recognition not supported in this browser (try Chrome or Edge)"; }
+else {
+  // Collect speech until the user stops (click the mic again, or ~1.8 s of silence); only then ask.
+  let rec = null, finalText = "", silenceTimer = null;
+  const SILENCE_MS = 1800;
+  const stop = () => { if (rec) rec.stop(); };
+  $("mic").onclick = () => {
+    if (rec) return stop();
+    rec = new SR(); rec.lang = "en-US"; rec.continuous = true; rec.interimResults = true;
+    finalText = "";
+    $("mic").textContent = "⏹"; $("mic").title = "Click to stop"; setStatus("Listening… (click ⏹ when done)");
+    rec.onresult = e => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalText += e.results[i][0].transcript + " "; else interim += e.results[i][0].transcript;
+      }
+      $("q").value = (finalText + interim).trim();          // live preview only, nothing is sent yet
+      clearTimeout(silenceTimer); silenceTimer = setTimeout(stop, SILENCE_MS);
+    };
+    rec.onerror = e => { if (e.error !== "no-speech" && e.error !== "aborted") setStatus("Speech error: " + e.error); };
+    rec.onend = () => {
+      clearTimeout(silenceTimer); rec = null;
+      $("mic").textContent = "🎤"; $("mic").title = "Speak your question"; setStatus("");
+      if ($("q").value.trim()) ask();
+    };
+    rec.start();
+  };
+}
+</script>
+</body>
+</html>
