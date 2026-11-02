@@ -1,0 +1,10 @@
+.env
+.venv
+.git
+**/__pycache__
+**/node_modules
+**/.next
+data/nexus
+frontend
+eval-loop
+tests

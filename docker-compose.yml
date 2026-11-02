@@ -1,0 +1,50 @@
+services:
+  web:
+    build: ./frontend
+    ports: ["3000:3000"]
+    depends_on: [api]
+    restart: unless-stopped
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      NEXUS_ENV: production
+      NEXUS_SECRET_KEY: ${NEXUS_SECRET_KEY:?set NEXUS_SECRET_KEY in .env}
+      NEXUS_DATABASE_URL: postgresql+psycopg://nexus:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/nexus
+      NEXUS_QDRANT_URL: http://qdrant:6333
+      NEXUS_REDIS_URL: redis://redis:6379/0
+      NEXUS_CORS_ORIGINS: ${NEXUS_PUBLIC_URL:-http://localhost:3000}
+    volumes: ["nexus-data:/data"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_started }
+      redis: { condition: service_started }
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: nexus
+    volumes: ["pg-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    volumes: ["qdrant-data:/qdrant/storage"]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+volumes:
+  nexus-data:
+  pg-data:
+  qdrant-data:

@@ -1,4 +1,91 @@
-# Voice-Enabled RAG
+# NEXUS AI
+
+A workspace intelligence platform: connect your sources, ask in text or voice (English, Hindi, Hinglish), delegate work to
+agents, and get notified when something important changes. It is built on the Voice RAG core documented further down.
+
+## Quick start (no services needed)
+
+Needs Python 3.12+ and Node 22+. SQLite, embedded Qdrant and an in-process cache are the defaults, so nothing else has to be installed.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements-nexus.txt
+cd frontend; npm install; cd ..
+copy .env.example .env       # then add OPENAI_API_KEY or ANTHROPIC_API_KEY
+.\dev.ps1                    # open http://localhost:3000 and create a workspace
+```
+
+With no model key it still works: it indexes files and answers by quoting them, and agents refuse to run with a clear message.
+
+## Production with Docker
+
+Set `NEXUS_SECRET_KEY`, `POSTGRES_PASSWORD` and `NEXUS_PUBLIC_URL` in `.env`, then run `docker compose up --build`.
+This uses PostgreSQL, a Qdrant server and Redis. **The API must run with one worker**, because the scheduler and rate limits are in-process.
+
+## Credentials
+
+| Feature | What you need | Without it |
+|---|---|---|
+| Generated answers, agents, graph, signals | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` | Quoted answers; those features are off |
+| Understanding paraphrases and Hindi | `OPENAI_API_KEY`, or `NEXUS_EMBEDDING_PROVIDER=local` | Keyword-style matching only |
+| Speech | `SARVAM_API_KEY`, `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID`, or `OPENAI_API_KEY` | Local Whisper for input; no spoken replies |
+| Websites, public GitHub repos | Nothing | |
+| Private GitHub repos, comments | Personal access token, entered in Sources | |
+| Slack | Bot token with `channels:read`, `channels:history`, `chat:write`; invite the bot to each channel | |
+| Google Drive, Gmail | `NEXUS_GOOGLE_CLIENT_ID` and `NEXUS_GOOGLE_CLIENT_SECRET`, with redirect URI `{NEXUS_PUBLIC_URL}/api/connectors/oauth/callback` | Shown as "Not configured" |
+| PostgreSQL as a source | Connection string for a read-only role (admins only) | |
+
+## What is verified
+
+Tested against live services: OpenAI chat, embeddings, Whisper and TTS; public GitHub; website crawling; a real browser including a
+microphone turn and barge-in. `tests/test_nexus.py` (75 tests) runs through the real API, SQL and embedded Qdrant with model vendors stubbed.
+
+| Reference measurement (OpenAI, this machine) | Result |
+|---|---|
+| Retrieval, 18 labelled questions | hit@1 94%, hit@4 100%, MRR 0.97 |
+| Latency over 10 mixed queries | P50 2.3 s, P70 2.9 s, P100 7.0 s; first words P50 1.3 s |
+
+Written against provider documentation but **not yet run against the live service**: Slack, Google Drive, Gmail, Sarvam, ElevenLabs, Anthropic,
+image understanding, the PostgreSQL source, and the Docker stack with its Postgres, Qdrant server and Redis. The Postgres schema is compile-checked only.
+Slack, Gmail and Sarvam have tests against mock responses, which only prove our handling of the API as documented.
+
+## How it works
+
+```
+frontend/ Next.js  --/api-->  nexus/ FastAPI
+  chat:     guard > rewrite > translate > hybrid search > rerank > relevance gate > stream > verify
+  agents:   LangGraph supervisor > workers > verification; side effects only through approvals
+  sync:     connector > parse > chunk > embed > Qdrant, then graph and signals
+```
+
+| Module | Responsibility |
+|---|---|
+| `nexus/rag.py` | Answer pipeline, language handling, verification, fallbacks |
+| `nexus/vectors.py` | Qdrant dense + sparse search; the permission filter lives here |
+| `nexus/llm.py` | Provider gateway, failover, usage and cost metering |
+| `nexus/connectors.py` | Website, GitHub, Slack, Drive, Gmail, PostgreSQL, and sync |
+| `nexus/agents.py` | Supervisor, agents, templates, documents and slides, approved actions |
+| `nexus/graph.py`, `memory.py`, `proactive.py`, `analytics.py`, `voice.py` | One feature each |
+| `nexus/security.py` | Auth, encryption of credentials, throttling, SSRF guard |
+
+**Decisions.** Neo4j is not used: the graph needs one-hop lookups, which SQL tables handle without a fourth datastore. Celery is not used: an
+in-process scheduler is enough for one server. The Data Analyst applies a declarative plan and never executes model-written code.
+
+**Security model.** Self-signup creates an isolated workspace; joining one needs an admin. Search filters by workspace and visibility inside
+`vectors.py`, so agents inherit the requesting user's permissions. Credentials are encrypted at rest. Agents cannot cause side effects:
+the Action Agent only creates an approval, and `execute_approval` is the single exit. Sensitive operations are written to an audit log.
+
+## Not built yet
+
+Computer-use agent, cloud storage connectors (S3 and similar), other database engines, Langfuse/OpenTelemetry export, token-by-token TTS
+streaming, OCR for scanned PDFs, per-document permissions mirrored from the source system (access is set per connector or document), and
+entity merging in the graph ("Atlas" and "Project Atlas" are currently two nodes).
+
+Roadmap detail: [docs/NEXUS_PLAN.md](docs/NEXUS_PLAN.md).
+
+---
+
+# Voice-Enabled RAG (core library)
 
 Speak a question, get a grounded, cited answer, or an honest "I don't know".
 

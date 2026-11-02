@@ -10,8 +10,8 @@ STOPWORDS = frozenset(
     "long many much often need want like know work works without after before".split()
 )
 
-_WORD = re.compile(r"[a-z0-9]+")
-_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
+_WORD = re.compile(r"[a-z0-9]+|[ऀ-ॣ०-ॿ]+")    # Latin or Devanagari (minus danda punctuation)
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])|(?<=[।॥])\s+")
 _MD_PREFIX = re.compile(r"^\s*(#{1,6}\s+|[-*]\s+|\d+\.\s+)")
 
 
